@@ -8,6 +8,21 @@ from corenlp import parser
 from tqdm import tqdm
 import sqlite3
 
+def better_sent_tokenize(texts):
+    if isinstance(texts, (str, bytes)):
+        texts = [texts]
+    
+    sents = []
+    
+    for text in texts:
+        for sent in sent_tokenize(text):
+            if len(sent) > 100 and '\n' in sent:
+                sents.extend(s.strip() for s in sent.split("\n") if s.strip())
+            else:
+                sents.append(sent)
+    
+    return sents
+
 def collect_nps(tree):
     s = set()
     
@@ -21,17 +36,26 @@ def collect_nps(tree):
     
     return s
 
-def find_node_by_tag(tree, tags, recursive=False):
+def find_node_by_tag(tree, tags, which=1, recursive=False):
     if not isinstance(tags, (tuple, list)) and not callable(tags):
         tags = (tags,)
+    
+    counter = 0
     
     while len(tree) > 0:
         for node in tree:
             if (callable(tags) and tags(node.label())) or (not callable(tags) and node.label() in tags):
-                return node
+                counter += 1
+                if counter >= which:
+                    return node
         
         if not recursive: break
-        tree = sum(list(node) for node in tree)
+        
+        newtree = []
+        for node in tree:
+            if isinstance(node, nltk.tree.Tree):
+                newtree.extend([item for item in node if not isinstance(item, (str, bytes))])
+        tree = newtree
     
     return None
 
@@ -79,6 +103,9 @@ twd = TreebankWordDetokenizer()
 
 def detokenize(tokens):
     return twd.detokenize(tokens)
+
+def capitalize_all(s):
+    return detokenize([word.capitalize() for word in word_tokenize(s)])
 
 def collect_vps(tree, ptr=None):
     ptr = ptr or _Pointer() # Keeps track of last NP for pronouns
@@ -241,7 +268,7 @@ def preprocess_db(con : sqlite3.Connection, cur : sqlite3.Cursor):
     added = set()
     
     for (game_id, name, summary, story) in tqdm(list(cur.execute("SELECT id, name, summary, story FROM games;")), unit="sent"):
-        for sent in sent_tokenize(summary) + sent_tokenize(story):
+        for sent in better_sent_tokenize([summary, story]):
             if not sent.strip(): continue # Ignore blank text
             
             for entry in collect_relations(sent, name):
