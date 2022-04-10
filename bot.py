@@ -40,13 +40,15 @@ class GameBot:
         return next(iter(self.cur.execute("SELECT value FROM metadata WHERE key = ?", (key,))), (default,))[0]
     
     def find_games(self, descriptor):
-        self.cur.execute("SELECT id, name FROM games WHERE name LIKE ?", (descriptor,))
+        self.cur.execute("SELECT * FROM games WHERE name LIKE ?", (descriptor,))
         result = self.cur.fetchmany()
         
         if len(result) > 0: return result
         
         self.cur.execute("SELECT * FROM games WHERE name LIKE ?", ('%' + descriptor + '%',))
-        return self.cur.fetchmany()
+        result = self.cur.fetchmany()
+        
+        return result
     
     def find_game(self, *args, **kwargs):
         return next(iter(self.find_games(*args, **kwargs)), None)
@@ -162,10 +164,10 @@ class GameBot:
         else:
             results = self.find_relations(subject=np, relation=predicate_lemma)
         
-        if results:
-            self.set("last_game", str(results[-1][-2]))
+        #if results:
+        #    self.set("last_game", str(results[-1][-2]))
         
-        pprint.pprint(results)
+        for result in results: pprint.pprint(result)
         
         self.con.commit()
         
