@@ -1,5 +1,6 @@
-games.db
-games.sqlite
+*.db
+*.sqlite
 .idea/*
 __pycache__/*
 *.pth
+*.pkl
