@@ -42,7 +42,9 @@ def igdb_request(igdb_wrapper, endpoint, request):
     byte_result = requests.post(url, **params).content
     return json.loads(byte_result.decode('utf-8'))
 
+_db_errors = False
 def execute_db_query(connection, query, values=[]):
+    global _db_errors
     """
     Performs SQL query on database
     Args:
@@ -59,6 +61,7 @@ def execute_db_query(connection, query, values=[]):
         connection.commit()
     except sqlite3.Error as e:
         print(f'SQL Error {e} occurred in query:\n{query}')
+        _db_errors = True
 
 class Franchise:
     """Stores Franchise information"""
@@ -117,43 +120,53 @@ if '__main__' == __name__:
     access_token = get_oauth(client_id, client_secret)
     wrapper = IGDBWrapper(client_id, access_token)
     
+    OFFSET = 0
+    db_connection.execute("CREATE TABLE IF NOT EXISTS metadata_numbers ("
+                          "  key TEXT NOT NULL PRIMARY KEY,"
+                          "  value INTEGER"
+                          ")")
+    OFFSET = next(iter(db_connection.execute("SELECT value FROM metadata_numbers WHERE key = 'offset';")), (OFFSET,))[0]
+    
     # Request 500 franchises from IGDB
-    franchises = igdb_request(wrapper, 'franchises', 'fields name, games; limit 500;')
+    franchises = igdb_request(wrapper, 'franchises', f'fields name, games; limit 500; offset {OFFSET};')
+    print("Received", len(franchises), "franchises")
     franchise_list = []  # Stores all received Franchises
     genre_set = set()  # Stores all seen genres
+    query_string = 'fields name, total_rating, category, first_release_date, storyline, summary, themes, genres, checksum; where id = {};'
     # Loop through all Franchises
-    for franchise in tqdm(franchises):
+    iterable = tqdm(franchises)
+    for franchise in iterable:
         franchise_games = franchise.get('games', [])
         # Only interested in franchises with 3+ related games
         if len(franchise_games) < 3:
             continue
         franchise_obj = Franchise(franchise['name'])
+        iterable.set_postfix({"franchise": franchise_obj.name}, False)
         # Get information for every Game related to the Franchise
-        for game_id in franchise_games:
-            # Get Game information
-            game_result = igdb_request(wrapper, 'games', f'fields name, total_rating, category, first_release_date, storyline, summary, themes, genres, checksum; where id = {game_id};')
-            # Handle API rate limit
-            sleep_timer = 4
-            while 'message' in game_result and sleep_timer < 10:
-                print('Too many requests, sleeping . . .')
-                sleep(sleep_timer)
-                sleep_timer += 1
-                game_result = igdb_request(wrapper, 'games', f'fields name, total_rating, category, first_release_date, storyline, summary, themes, genres, checksum; where id = {game_id};')
-            if len(game_result) == 0:
+        this_query = query_string.format(str(tuple(int(game_id) for game_id in franchise_games)).replace(" ", ""))
+        game_result = igdb_request(wrapper, 'games', this_query)
+        # Handle API rate limit
+        sleep_timer = 4
+        while 'message' in game_result and sleep_timer < 10:
+            print('Too many requests, sleeping . . .')
+            sleep(sleep_timer)
+            sleep_timer += 1
+            game_result = igdb_request(wrapper, 'games', query_string.format(this_query))
+        if len(game_result) == 0:
+            continue
+        for game in game_result:
+            if game['category'] != 0:  # Not a main game, ignore
                 continue
-            for game in game_result:
-                if game['category'] != 0:  # Not a main game, ignore
-                    continue
-                # Handle possibly-null API data
-                game_rating = game.get('total_rating', -1)
-                game_release_date = game.get('first_release_date', None)
-                game_story = game.get('storyline', '')
-                game_summary = game.get('summary', '')
-                game_themes = game.get('themes', [])
-                game_genres = game.get('genres', [])
-                game_obj = Game(game['name'], game_rating, game_release_date, game_story, game_summary, game_themes, game_genres, game['checksum'])
-                genre_set.update(game_obj.genres)
-                franchise_obj.add_game(game_obj)
+            # Handle possibly-null API data
+            game_rating = game.get('total_rating', -1)
+            game_release_date = game.get('first_release_date', None)
+            game_story = game.get('storyline', '')
+            game_summary = game.get('summary', '')
+            game_themes = game.get('themes', [])
+            game_genres = game.get('genres', [])
+            game_obj = Game(game['name'], game_rating, game_release_date, game_story, game_summary, game_themes, game_genres, game['checksum'])
+            genre_set.update(game_obj.genres)
+            franchise_obj.add_game(game_obj)
         franchise_list.append(franchise_obj)
     
     # Get names of genres using Genre IDs received with Game information
@@ -199,10 +212,10 @@ if '__main__' == __name__:
     );
     '''
     # Create DB tables
-    execute_db_query(db_connection, 'DROP TABLE IF EXISTS franchises;')
-    execute_db_query(db_connection, 'DROP TABLE IF EXISTS games;')
-    execute_db_query(db_connection, 'DROP TABLE IF EXISTS in_franchise;')
-    execute_db_query(db_connection, 'DROP TABLE IF EXISTS in_genre;')
+    #execute_db_query(db_connection, 'DROP TABLE IF EXISTS franchises;')
+    #execute_db_query(db_connection, 'DROP TABLE IF EXISTS games;')
+    #execute_db_query(db_connection, 'DROP TABLE IF EXISTS in_franchise;')
+    #execute_db_query(db_connection, 'DROP TABLE IF EXISTS in_genre;')
     execute_db_query(db_connection, create_franchise)
     execute_db_query(db_connection, create_game)
     execute_db_query(db_connection, create_in_franchise)
@@ -210,19 +223,19 @@ if '__main__' == __name__:
     
     # SQL queries to insert data into DB tables
     franchise_insert = '''
-    INSERT INTO
+    INSERT OR REPLACE INTO
       franchises VALUES (?, ?)
     '''
     game_insert = '''
-    INSERT INTO
+    INSERT OR REPLACE INTO
       games VALUES (?, ?, ?, ?, ?, ?)
     '''
     in_franchise_insert = '''
-    INSERT INTO
+    INSERT OR REPLACE INTO
       in_franchise VALUES (?, ?)
     '''
     in_genre_insert = '''
-    INSERT INTO
+    INSERT OR REPLACE INTO
       in_genre VALUES (?, ?)
     '''
 
@@ -250,4 +263,10 @@ if '__main__' == __name__:
     execute_db_query(db_connection, franchise_insert, franchise_values)
     execute_db_query(db_connection, game_insert, list(game_values))
     execute_db_query(db_connection, in_franchise_insert, in_franchise)
-    execute_db_query(db_connection, in_genre_insert, in_genre)
+    execute_db_query(db_connection, in_genre_insert, list(in_genre))
+
+    if _db_errors:
+        print("Database errors detected; not updating offset metadata")
+    else:
+        db_connection.execute("INSERT OR REPLACE INTO metadata_numbers (key, value) VALUES('offset', ?);", (OFFSET + 500,))
+        db_connection.commit()
