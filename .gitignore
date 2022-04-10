@@ -1,0 +1,4 @@
+games.db
+games.sqlite
+.idea/*
+*.pth
