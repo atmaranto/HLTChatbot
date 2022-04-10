@@ -1,4 +1,5 @@
 games.db
 games.sqlite
 .idea/*
+__pycache__/*
 *.pth
