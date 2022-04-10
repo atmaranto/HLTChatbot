@@ -8,6 +8,29 @@ from corenlp import parser
 from tqdm import tqdm
 import sqlite3
 
+def and_join(strings):
+    strings = list(strings)
+    if len(strings) < 2:
+        return ''.join(strings)
+    elif len(strings) < 3:
+        return ' and '.join(strings)
+    else:
+        return ', '.join(strings[:-1]) + ' and ' + strings[-1]
+
+def remove_tag(np, tags="PP"):
+    if isinstance(tags, (str, bytes)):
+        tags = (tags,)
+        
+    np = np.copy()
+    i = 0
+    while i < len(np):
+        if np[i].label() in tags:
+            np.pop(i)
+            i -= 1
+        i += 1
+    
+    return np
+
 def better_sent_tokenize(texts):
     if isinstance(texts, (str, bytes)):
         texts = [texts]
@@ -260,7 +283,7 @@ def collect_relations(sent, title="game"):
     
     return relations
 
-def preprocess_db(con : sqlite3.Connection, cur : sqlite3.Cursor):
+def preprocess_db(con : sqlite3.Connection, cur : sqlite3.Cursor, start : int = 0, limit : int = 1000):
     # TODO: Mark "there be" as existential
     # cur.execute("DROP TABLE IF EXISTS relations;")
     cur.execute("CREATE TABLE IF NOT EXISTS relations ("
@@ -276,8 +299,12 @@ def preprocess_db(con : sqlite3.Connection, cur : sqlite3.Cursor):
     
     relations = []
     added = set()
+    position = start
     
-    for (game_id, name, summary, story) in tqdm(list(cur.execute("SELECT id, name, summary, story FROM games;")), unit="sent"):
+    print("Stating processing at position", position)
+    
+    for (game_id, name, summary, story) in tqdm(list(cur.execute(f"SELECT id, name, summary, story FROM games LIMIT {limit} OFFSET {start};")), unit="game"):
+        position += 1
         for sent in better_sent_tokenize([summary, story]):
             if not sent.strip(): continue # Ignore blank text
             
@@ -288,18 +315,14 @@ def preprocess_db(con : sqlite3.Connection, cur : sqlite3.Cursor):
                     added.add(key)
     
     try:
-        cur.executemany("INSERT INTO relations (subject, relation, object, extra, original_phrase, game_id, franchise_id) "
-                        "SELECT :subject, :relation, :object, :extra, :original_phrase, :game_id, :franchise_id "
-                        "WHERE NOT EXISTS(SELECT * FROM relations WHERE"
-                        "                 subject  LIKE :subject  AND "
-                        "                 relation LIKE :relation AND "
-                        "                 object   LIKE :object   AND "
-                        "                 game_id     = :game_id"
-                        "                )",
+        cur.executemany("INSERT OR REPLACE INTO relations (subject, relation, object, extra, original_phrase, game_id, franchise_id) "
+                        "VALUES(:subject, :relation, :object, :extra, :original_phrase, :game_id, :franchise_id)",
                         relations)
+        cur.execute("INSERT OR REPLACE INTO metadata_numbers (key, value) VALUES('bot_preprocess_offset', ?)", (position,))
         
         con.commit()
     except Exception as e:
         traceback.print_exc()
     
-    code.interact(local=locals())
+    if len(relations) > 0:
+        code.interact(local=locals())

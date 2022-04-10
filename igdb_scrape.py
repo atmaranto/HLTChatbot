@@ -65,8 +65,9 @@ def execute_db_query(connection, query, values=[]):
 
 class Franchise:
     """Stores Franchise information"""
-    def __init__(self, name):
+    def __init__(self, name, slug):
         self.name = name
+        self.slug = slug
         self.games = set()
     
     def __repr__(self) -> str:
@@ -80,7 +81,7 @@ class Franchise:
 
 class Game:
     """Stores Game information"""
-    def __init__(self, name, rating, release_date, storyline, summary, themes, genres, checksum):
+    def __init__(self, name, rating, release_date, storyline, summary, themes, genres, checksum, slug):
         """
         Game constructor
         Args:
@@ -101,6 +102,7 @@ class Game:
         self.themes = themes
         self.genres = set(genres)
         self.checksum = checksum
+        self.slug = slug
 
     def __eq__(self, other):
         return self.checksum == other.checksum
@@ -128,22 +130,24 @@ if '__main__' == __name__:
     OFFSET = next(iter(db_connection.execute("SELECT value FROM metadata_numbers WHERE key = 'offset';")), (OFFSET,))[0]
     
     # Request 500 franchises from IGDB
-    franchises = igdb_request(wrapper, 'franchises', f'fields name, games; limit 500; offset {OFFSET};')
+    franchises = igdb_request(wrapper, 'franchises', f'fields name, slug, games; limit 500; offset {OFFSET};')
     print("Received", len(franchises), "franchises")
     franchise_list = []  # Stores all received Franchises
     genre_set = set()  # Stores all seen genres
-    query_string = 'fields name, total_rating, category, first_release_date, storyline, summary, themes, genres, checksum; where id = {};'
+    game_map = {}
+    query_string = 'fields name, total_rating, category, first_release_date, storyline, summary, themes, genres, slug, checksum; where id = {};'
     # Loop through all Franchises
     iterable = tqdm(franchises)
     for franchise in iterable:
         franchise_games = franchise.get('games', [])
         # Only interested in franchises with 3+ related games
-        if len(franchise_games) < 3:
+        if len(franchise_games) < 1:
             continue
-        franchise_obj = Franchise(franchise['name'])
+        franchise_obj = Franchise(franchise['name'], franchise["slug"])
         iterable.set_postfix({"franchise": franchise_obj.name}, False)
         # Get information for every Game related to the Franchise
-        this_query = query_string.format(str(tuple(int(game_id) for game_id in franchise_games)).replace(" ", ""))
+        game_ids = str(tuple(int(game_id) for game_id in franchise_games)).replace(" ", "") if len(franchise_games) > 1 else str(franchise_games[0])
+        this_query = query_string.format(game_ids)
         game_result = igdb_request(wrapper, 'games', this_query)
         # Handle API rate limit
         sleep_timer = 4
@@ -158,14 +162,18 @@ if '__main__' == __name__:
             if game['category'] != 0:  # Not a main game, ignore
                 continue
             # Handle possibly-null API data
-            game_rating = game.get('total_rating', -1)
-            game_release_date = game.get('first_release_date', None)
-            game_story = game.get('storyline', '')
-            game_summary = game.get('summary', '')
-            game_themes = game.get('themes', [])
-            game_genres = game.get('genres', [])
-            game_obj = Game(game['name'], game_rating, game_release_date, game_story, game_summary, game_themes, game_genres, game['checksum'])
-            genre_set.update(game_obj.genres)
+            if game_map.get(game["slug"]):
+                game_obj = game_map[game["slug"]]
+            else:
+                game_rating = game.get('total_rating', -1)
+                game_release_date = game.get('first_release_date', None)
+                game_story = game.get('storyline', '')
+                game_summary = game.get('summary', '')
+                game_themes = game.get('themes', [])
+                game_genres = game.get('genres', [])
+                game_obj = Game(game['name'], game_rating, game_release_date, game_story, game_summary, game_themes, game_genres, game['checksum'], game["slug"])
+                genre_set.update(game_obj.genres)
+                game_map[game_obj.slug] = game_obj
             franchise_obj.add_game(game_obj)
         franchise_list.append(franchise_obj)
     
@@ -180,13 +188,13 @@ if '__main__' == __name__:
     # SQL queries to create DB tables
     create_franchise = '''
     CREATE TABLE IF NOT EXISTS franchises (
-        id INTEGER PRIMARY KEY,
+        id TEXT PRIMARY KEY,
         name TEXT NOT NULL
     );
     '''
     create_game = '''
     CREATE TABLE IF NOT EXISTS games (
-        id INTEGER PRIMARY KEY,
+        id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         release_date INTEGER,
         summary TEXT NOT NULL,
@@ -196,8 +204,8 @@ if '__main__' == __name__:
     '''
     create_in_franchise = '''
     CREATE TABLE IF NOT EXISTS in_franchise (
-        game_id INTEGER NOT NULL,
-        franchise_id INTEGER NOT NULL,
+        game_id TEXT NOT NULL,
+        franchise_id TEXT NOT NULL,
         FOREIGN KEY(game_id) REFERENCES games(id),
         FOREIGN KEY(franchise_id) REFERENCES franchises(id),
         PRIMARY KEY (franchise_id, game_id)
@@ -205,7 +213,7 @@ if '__main__' == __name__:
     '''
     create_in_genre = '''
     CREATE TABLE IF NOT EXISTS in_genre (
-        game_id INTEGER NOT NULL,
+        game_id TEXT NOT NULL,
         genre TEXT NOT NULL,
         FOREIGN KEY(game_id) REFERENCES games(id),
         PRIMARY KEY (genre, game_id)
@@ -240,24 +248,25 @@ if '__main__' == __name__:
     '''
 
     # Format data into SQLite3-compatible form
-    franchise_id = 1  # Serves as ID of current Franchise
-    franchise_values = []  # Data to insert into franchises table
+    franchise_values = []
     in_franchise = []  # Data to insert into in_franchise table
     in_genre = set()  # Data to insert into in_genre table
     game_values = set()  # Data to insert into games table
+    for game in game_map.values():
+        summary = game.summary #.replace('\'', '\'\'')
+        story = game.story #.replace('\'', '\'\'')
+        # Add game, franchise, genres, and game-franchise/game-genre mappings
+        game_values.add((game.slug, game.name, game.release_date, summary, story, game.rating))
+        
+        for genre in game.genres:
+            in_genre.add((game.slug, genre_map[genre]))
+    
     # Loop through each franchise and add data to corresponding tables
     for franchise in franchise_list:
-        franchise_values.append((franchise_id, franchise.name))
+        franchise_values.append((franchise.slug, franchise.name))
         for game in franchise.games:
             # Escape ' to avoid SQL errors
-            summary = game.summary.replace('\'', '\'\'')
-            story = game.story.replace('\'', '\'\'')
-            # Add game, franchise, genres, and game-franchise/game-genre mappings
-            game_values.add((hash(game), game.name, game.release_date, summary, story, game.rating))
-            in_franchise.append((hash(game), franchise_id))
-            for genre in game.genres:
-                in_genre.add((hash(game), genre_map[genre]))
-        franchise_id += 1
+            in_franchise.append((game.slug, franchise.slug))
 
     # Insert data into corresponding DB tables
     execute_db_query(db_connection, franchise_insert, franchise_values)
