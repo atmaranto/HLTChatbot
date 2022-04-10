@@ -107,6 +107,16 @@ def detokenize(tokens):
 def capitalize_all(s):
     return detokenize([word.capitalize() for word in word_tokenize(s)])
 
+def conjugate(verb, noun=None):
+    singular = noun is None or wnl.lemmatize(noun, "n") == noun
+    lemma = wnl.lemmatize(verb, "v")
+    if singular:
+        if verb == "be": return "is"
+        return lemma + "s"
+    else:
+        if verb == "be": return "are"
+        return lemma
+
 def collect_vps(tree, ptr=None):
     ptr = ptr or _Pointer() # Keeps track of last NP for pronouns
     np = None

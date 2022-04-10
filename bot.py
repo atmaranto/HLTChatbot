@@ -5,6 +5,7 @@ The main file for the HLT Chatbot.
 """
 import code
 import pprint
+import sys
 
 import nltk
 from nltk import sent_tokenize, word_tokenize, pos_tag
@@ -15,7 +16,7 @@ import pickle
 
 import datetime
 
-from utils import advanced_parse, preprocess_db, find_node_by_tag, detokenize, capitalize_all, wnl
+from utils import advanced_parse, preprocess_db, find_node_by_tag, detokenize, capitalize_all, conjugate, wnl
 
 class GameBot:
     def __init__(self, db_path="games.sqlite"):
@@ -54,11 +55,17 @@ class GameBot:
         return next(iter(self.find_games(*args, **kwargs)), None)
     
     def find_relations(self, **kwargs):
+        return self._find_relations("=", **kwargs)
+    
+    def find_relations_like(self, **kwargs):
+        return self._find_relations(" LIKE ", **kwargs)
+    
+    def _find_relations(self, eq, **kwargs):
         if len(kwargs) == 0: return []
         
         key_values = list(kwargs.items())
         
-        query = "SELECT * FROM relations WHERE " + " AND ".join(key + "=?" for key, _ in key_values) + ";"
+        query = "SELECT * FROM relations WHERE " + " AND ".join(key + eq + "?" for key, _ in key_values) + ";"
         return list(self.cur.execute(query, tuple(value for _, value in key_values)))
     
     def get_random_fact(self):
@@ -78,7 +85,7 @@ class GameBot:
         if command is not None and to is not None:
             # TODO: Change command to be "tell me something"
             fact = self.get_random_fact()
-            predicate = (fact[1] + "s") if fact[1] != "be" else "is"
+            predicate = conjugate(fact[1], fact[0])
             print(f"Did you know: {fact[0].capitalize()} {predicate} {fact[2]}?")
             print(f"Related to game: {self.find_game_by_id(fact[-2])[1]}")
             return True
@@ -115,13 +122,21 @@ class GameBot:
         if query is None:
             return "Couldn't find a query in your question"
         
-        vb = find_node_by_tag(query, lambda label: label.startswith("VB"), recursive=True)
-        
-        if vb is None:
-            return "Your question doesn't appear to be complete"
-        
-        predicate = detokenize(vb.leaves())
-        predicate_lemma = wnl.lemmatize(predicate, "v")
+        i = 1
+        while True:
+            vb = find_node_by_tag(query, lambda label: label.startswith("VB"), which=i, recursive=True)
+            
+            if vb is None:
+                return "Your question doesn't appear to be complete"
+            
+            predicate = detokenize(vb.leaves()).lower()
+            predicate_lemma = wnl.lemmatize(predicate, "v")
+            
+            if predicate_lemma == "do":
+                # Probably a particle
+                i += 1
+            else:
+                break
         
         np = find_node_by_tag(query, "NP")
         
@@ -137,6 +152,9 @@ class GameBot:
         # when the program should exit, and a string for specific error messages.
         # I recommend printing out question, query, predicate, and np to see what we have to work with. tree contains
         # the entire parse tree.
+        
+        # Debug
+        print(question, np, predicate, query)
 
         results = []
         if question in ("when",):
@@ -160,14 +178,22 @@ class GameBot:
             if game is None:
                 return f"I couldn't find any game called {np}"
             
-            results = self.find_relations(subject="there", relation="be", game_id=game[0])
+            results = self.find_relations_like(subject="there", relation="be", game_id=game[0])
+            results = [
+                f"{capitalize_all(result[0])} {result[1]} {result[2]}" for result in results
+            ]
         else:
-            results = self.find_relations(subject=np, relation=predicate_lemma)
+            results = self.find_relations_like(subject=np, relation=predicate_lemma)
+            results = [
+                f"{capitalize_all(result[0])} {conjugate(result[1], result[0])} {result[2]}" for result in results
+            ]
         
         #if results:
         #    self.set("last_game", str(results[-1][-2]))
         
         for result in results: pprint.pprint(result)
+        if len(results) == 0:
+            print("I'm afraid that I don't know much about that.")
         
         self.con.commit()
         
@@ -184,7 +210,7 @@ class GameBot:
             
             if line.lower().strip(".!") in ["quit", "exit", "q"]:
                 return False
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, EOFError):
             return False
         
         return line
@@ -207,7 +233,7 @@ class GameBot:
 if __name__ == "__main__":
     bot = GameBot()
     # bot.preprocess_facts()
-    # code.interact(local=locals())
+    if "interact" in sys.argv: code.interact(local=locals())
     bot.loop()
     
     
