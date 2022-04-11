@@ -121,7 +121,17 @@ class GameBot:
         command = find_node_by_tag(vp, "VB")
         to = find_node_by_tag(vp, "NP")
         what = find_node_by_tag(vp, "NP", which=2)
-        subject = find_node_by_tag(tree, "PRP", recursive=True)
+        subject = find_node_by_tag(tree, "PRP", recursive=True) # Subject is actually an object. Don't worry about it...
+        
+        if subject is None:
+            pp = find_node_by_tag(tree, "PP", recursive=True)
+            if pp is not None:
+                subject = find_node_by_tag(pp, ("PRP", "NP"))
+            else:
+                subject = find_node_by_tag(tree, "NP")
+        
+        # print(tree, vp, command, to, what, subject)
+        
         subject_lemma = None
         subject_word = None
         
@@ -149,17 +159,29 @@ class GameBot:
             if subject is not None:
                 if command_lemma == "forget":
                     if subject_lemma in ("i", "me"): subject_lemma = self.username
-                    self.cur.execute("DELETE FROM relations WHERE subject LIKE ?;", (subject_lemma,))
+
+                    options = [subject_lemma]
+                    
+                    try:
+                        other = detokenize(remove_tag(subject, "DT").leaves()).lower()
+                        if subject_lemma != other: options.append(other)
+                    except Exception as e:
+                        pass
+                    
+                    for option in options:
+                        self.cur.execute("DELETE FROM relations WHERE subject LIKE ?;", (option,))
                     self.con.commit()
                     print(f"I've removed everything related to {subject_lemma}.")
                     return True
         
         if subject is not None:
             # Fact
-            if subject_lemma in ("i", "me"):
+            if True: #subject_lemma in ("i", "me"):
                 # print("Fact received:")
                 # print(tree, subject_lemma)
-                relations = collect_relations(sent, self.username)
+                if subject_lemma in ("i", "me"): subject_lemma = self.username
+                
+                relations = collect_relations(sent, subject_lemma)
                 relations = [
                     {**relation, "game_id": "reality", "franchise_id": None} for relation in relations
                 ]
@@ -177,8 +199,8 @@ class GameBot:
                     
                     print("I'll remember that!")
                     return True
-            else:
-                return f"I'm afraid that I don't record facts about {subject_word}."
+            #else:
+            #    return f"I'm afraid that I don't record facts about {subject_word}."
         
         return "That doesn't look like a question... we currently only support questions"
     
@@ -333,10 +355,17 @@ class GameBot:
                 
             if len(results) == 0:
                 # Fallback
-                results = self.find_relations_like(subject=np_word, relation=predicate_lemma)
-                results = [
-                    f"{capitalize_all(result[0])} {conjugate(result[1], result[0])} {result[2]}" for result in results
-                ]
+                options = [np_word]
+                other = detokenize(remove_tag(np, "DT").leaves()).lower()
+                if np_word != other: options.append(other)
+                
+                for options in options:
+                    res = self.find_relations_like(subject=options, relation=predicate_lemma)
+                    results.extend([
+                        f"{capitalize_all(result[0])} {conjugate(result[1], result[0])} {result[2]}" for result in res
+                    ])
+                    
+                    if res: break
         
         #if results:
         #    self.set("last_game", str(results[-1][-2]))
