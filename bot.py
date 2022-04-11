@@ -297,33 +297,37 @@ class GameBot:
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
                         else:
-                            franchises = self.get_part_of_franchises(game[0])
-                            
-                            results.append(
-                                f"{capitalize_all(game[1])} is part of the following franchises:\n" + \
-                                and_join(capitalize_all(franchise[1]) for franchise in franchises)
-                            )
+                            for game in games:
+                                franchises = self.get_part_of_franchises(game[0])
+                                
+                                results.append(
+                                    f"{capitalize_all(game[1])} is part of the following franchises:\n" + \
+                                    and_join(capitalize_all(franchise[1]) for franchise in franchises)
+                                )
                     elif question_object_lemma == "story":
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
                         else:
-                            results.append(
-                                f"The story of {game[1]} is: {game[4]}"
-                            )
+                            for game in games:
+                                results.append(
+                                    f"The story of {game[1]} is: {game[4]}"
+                                )
                     elif question_object_lemma == "description":
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
                         else:
-                            results.append(
-                                f"The description of {game[1]} is: {game[3]}"
-                            )
+                            for game in games:
+                                results.append(
+                                    f"The description of {game[1]} is: {game[3]}"
+                                )
                     elif question_object_lemma == "rating":
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
                         else:
-                            results.append(
-                                f"{game[1]} is rated {game[5]}"
-                            )
+                            for game in games:
+                                results.append(
+                                    f"{game[1]} is rated {game[5]}"
+                                )
                     elif question_object_lemma == "game":
                         # Example: What [games] are in the Minecraft franchise?
                         pass
@@ -337,14 +341,16 @@ class GameBot:
         
         #if results:
         #    self.set("last_game", str(results[-1][-2]))
-        
-        for result in results:
-            if isinstance(result, str):
-                print(result)
-            else:
-                pprint.pprint(result)
+
         if len(results) == 0:
             print("I'm afraid that I don't know much about that.")
+        else:
+            print(f"{len(results)} responses matched your querry:")
+            for result in results:
+                if isinstance(result, str):
+                    print(result)
+                else:
+                    pprint.pprint(result)
         
         self.con.commit()
         

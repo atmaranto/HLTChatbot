@@ -313,8 +313,8 @@ def preprocess_db(con : sqlite3.Connection, cur : sqlite3.Cursor, start : int = 
                 "  object TEXT NOT NULL,"
                 "  original_phrase TEXT NOT NULL," # Original phrase
                 "  extra TEXT," # Optional extra text
-                "  game_id INT NOT NULL," # Optional game_id
-                "  franchise_id INT," # Optional franchise id
+                "  game_id TEXT NOT NULL," # Optional game_id
+                "  franchise_id TEXT," # Optional franchise id
                 "  PRIMARY KEY(subject, relation, object, game_id)"
                 ");")
     
