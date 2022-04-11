@@ -66,7 +66,7 @@ class GameBot:
                 descs = [base_descriptor]
             
             for descriptor in descs:
-                print("Looking for", repr(descriptor))
+                # print("Looking for", repr(descriptor))
                 self.cur.execute("SELECT * FROM games WHERE id IN (SELECT game_id FROM ascii_names WHERE value LIKE ?)", (descriptor,))
                 result = self.cur.fetchmany()
                 
@@ -124,6 +124,7 @@ class GameBot:
         what = find_node_by_tag(vp, "NP", which=2)
         subject = find_node_by_tag(tree, "PRP", recursive=True)
         subject_lemma = None
+        subject_word = None
         
         if subject is not None:
             # Fact
@@ -132,8 +133,8 @@ class GameBot:
         
         if command is not None:
             command_lemma = wnl.lemmatize(detokenize(command.leaves()).lower())
-            print("Command received:")
-            print(command_lemma, to, what)
+            # print("Command received:")
+            # print(command_lemma, to, what)
             
             if what is not None and to is not None:
                 what_lemma = wnl.lemmatize(detokenize(what.leaves()).lower())
@@ -157,8 +158,8 @@ class GameBot:
         if subject is not None:
             # Fact
             if subject_lemma in ("i", "me"):
-                print("Fact received:")
-                print(tree, subject_lemma)
+                # print("Fact received:")
+                # print(tree, subject_lemma)
                 relations = collect_relations(sent, self.username)
                 relations = [
                     {**relation, "game_id": "reality", "franchise_id": None} for relation in relations
@@ -168,7 +169,7 @@ class GameBot:
                     if game is not None:
                         relation["object"] = game[1]
                 
-                print(relations)
+                # print(relations)
                 if relations:
                     self.cur.executemany("INSERT OR REPLACE INTO relations (subject, relation, object, extra, original_phrase, game_id, franchise_id) "
                                          "VALUES(:subject, :relation, :object, :extra, :original_phrase, :game_id, :franchise_id)",
@@ -253,7 +254,7 @@ class GameBot:
             game = None
         
         # Debug
-        print(question, question_object, predicate, np, query)
+        # print(question, question_object, predicate, np, query)
 
         results = []
         if question in ("when",):
@@ -275,12 +276,14 @@ class GameBot:
                 return f"I couldn't find any game called {np_word}"
             
             if predicate_lemma == "be":
-                ind = find_node_by_tag(vb, "NP", which=2)
-                ind_lemma = None if ind is None else wnl.lemmatize(detokenize(ind.leaves()).lower(), "n")
-                if ind_lemma == "rating":
-                    results.append(
-                        f"{game[1]} is rated {game[5]}"
-                    )
+                ind = find_node_by_tag(query, (lambda tag: tag.startswith("V")), which=2)
+                ind_lemma = None if ind is None else wnl.lemmatize(detokenize(ind.leaves()).lower(), "v")
+                # print("HOWBE", query, ind, ind_lemma)
+                if ind_lemma == "rat":
+                    for game in games:
+                        results.append(
+                            f"{game[1]} is rated {game[5]}"
+                        )
             
             if not results:
                 results = self.find_relations_like(subject="there", relation="be", game_id=game[0])
@@ -376,7 +379,7 @@ class GameBot:
                 response = input("Y/n: ").strip().lower()
                 if response not in ("no", "n", "not"):
                     self.username = username.lower()
-                    print(f"Username selected: {self.username}")
+                    print(f"Username selected: {capitalize_all(self.username)}")
                     print("Type \"logout\" to log out.")
                     self.cur.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('username', ?)", (self.username,))
                     self.con.commit()
