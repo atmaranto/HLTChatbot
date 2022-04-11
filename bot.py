@@ -14,14 +14,14 @@ import sqlite3
 import datetime
 
 from utils import advanced_parse, preprocess_db, find_node_by_tag, detokenize, capitalize_all, conjugate,\
-    remove_tag, and_join, normalize_encoding, wnl
+    remove_tag, and_join, normalize_encoding, collect_relations, wnl
 
 class GameBot:
     def __init__(self, db_path="games.sqlite"):
         self.con = sqlite3.connect(db_path)
         self.cur = self.con.cursor()
         self.prepare_state()
-        self.username = None
+        self.username = self.fetch_username()
     
     def prepare_state(self):
         self.cur.execute("CREATE TABLE IF NOT EXISTS metadata ("
@@ -49,18 +49,22 @@ class GameBot:
     def set(self, key : str, value : str):
         # Sets a fact about the current state
         self.cur.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", (key, value))
+        self.con.commit()
     
     def get(self, key : str, default=None):
         return next(iter(self.cur.execute("SELECT value FROM metadata WHERE key = ?", (key,))), (default,))[0]
     
     def find_games(self, *descriptors):
         for base_descriptor in descriptors:
-            descs = [base_descriptor]
-            other = remove_tag(base_descriptor, "PP")
-            if other != base_descriptor: descs.append(other)
+            if isinstance(base_descriptor, nltk.tree.Tree):
+                descs = [detokenize(base_descriptor.leaves())]
+                other = remove_tag(base_descriptor, ("PP", "POS"), recursive=True)
+                if other != base_descriptor: descs.append(detokenize(other.leaves()))
+            else:
+                descs = [base_descriptor]
             
-            for descriptor_tree in descs:
-                descriptor = detokenize(descriptor_tree.leaves())
+            for descriptor in descs:
+                print("Looking for", repr(descriptor))
                 self.cur.execute("SELECT * FROM games WHERE id IN (SELECT game_id FROM ascii_names WHERE value LIKE ?)", (descriptor,))
                 result = self.cur.fetchmany()
                 
@@ -103,25 +107,30 @@ class GameBot:
         return row
     
     def find_game_by_id(self, game_id):
+        if game_id == "reality": return ("reality", "Reality", 0, "A stand-in game for reality", "You exist. That's the story.", 100)
         return next(iter(self.cur.execute("SELECT * FROM games WHERE id = ?", (game_id,))), None)
     
-    def process_statement(self, tree):
+    def process_statement(self, tree, sent):
         # Try to process it as a command
-        tree = find_node_by_tag(tree, "VP") or tree
-        command = find_node_by_tag(tree, "VB")
-        to = find_node_by_tag(tree, "NP")
-        what = find_node_by_tag(tree, "NP", which=2)
+        vp = find_node_by_tag(tree, "VP") or tree
+        command = find_node_by_tag(vp, "VB")
+        to = find_node_by_tag(vp, "NP")
+        what = find_node_by_tag(vp, "NP", which=2)
+        subject = find_node_by_tag(tree, "PRP", recursive=True)
+
+        if subject is not None:
+            # Fact
+            subject_word = detokenize(subject.leaves()).lower()
+            subject_lemma = wnl.lemmatize(subject_word, "n")
         
-        print("Non-question received")
-        print(command, to, what)
-        
-        if command is not None and to is not None:
-            # TODO: Change command to be "tell me something"
+        if command is not None:
             command_lemma = wnl.lemmatize(detokenize(command.leaves()).lower())
-            to_lemma = wnl.lemmatize(detokenize(to.leaves()).lower())
+            print("Command received:")
+            print(command_lemma, to, what)
             
-            if what is not None:
+            if what is not None and to is not None:
                 what_lemma = wnl.lemmatize(detokenize(what.leaves()).lower())
+                to_lemma = wnl.lemmatize(detokenize(to.leaves()).lower())
                 
                 if command_lemma in ("tell", "give") and to_lemma in ("me", "I") and "something" in what_lemma:
                     fact = self.get_random_fact()
@@ -129,8 +138,39 @@ class GameBot:
                     print(f"Did you know: {fact[0].capitalize()} {predicate} {fact[2]}?")
                     print(f"Related to game: {self.find_game_by_id(fact[-2])[1]}")
                     return True
+            
+            if subject is not None:
+                if command_lemma == "forget":
+                    self.cur.execute("")
+                    self.con.commit()
+                    print(f"I've removed everything related to {subject_lemma}.")
+                    return True
         
-        
+        if subject is not None:
+            # Fact
+            if subject_lemma in ("i", "me"):
+                print("Fact received:")
+                print(tree, subject_lemma)
+                relations = collect_relations(sent, self.username)
+                relations = [
+                    {**relation, "game_id": "reality", "franchise_id": None} for relation in relations
+                ]
+                for relation in relations:
+                    game = self.find_game(relation["object"])
+                    if game is not None:
+                        relation["object"] = game[1]
+                
+                print(relations)
+                if relations:
+                    self.cur.executemany("INSERT OR REPLACE INTO relations (subject, relation, object, extra, original_phrase, game_id, franchise_id) "
+                                         "VALUES(:subject, :relation, :object, :extra, :original_phrase, :game_id, :franchise_id)",
+                                         relations)
+                    self.con.commit()
+                    
+                    print("I'll remember that!")
+                    return True
+            else:
+                return f"I'm afraid that I don't record facts about {subject_word}."
         
         return "That doesn't look like a question... we currently only support questions"
     
@@ -138,10 +178,10 @@ class GameBot:
         """Processes the line of user input"""
         tree, entities, openie, tokens = advanced_parse(line)
         
-        print("Entities:")
-        pprint.pprint(entities)
+        # print("Entities:")
+        # pprint.pprint(entities)
         
-        tree.pprint()
+        # tree.pprint()
         
         while len(tree) == 1:
             tree = tree[0]
@@ -151,7 +191,7 @@ class GameBot:
         if tree.label() != "SBARQ":
             # TODO: Enable the user to say "I like X" and "I dislike X" or possibly to add arbitrary facts as relations.
             #       I could have game id = 0 for "reality."
-            return self.process_statement(tree)
+            return self.process_statement(tree, line)
         
         punct = find_node_by_tag(tree, ".")
         if punct is None or detokenize(punct.leaves()) != "?":
@@ -160,10 +200,9 @@ class GameBot:
         question_phrase = find_node_by_tag(tree, ("WHNP", "WHADVP"))
         if question_phrase is None: return "No question word found"
         
-        print(question_phrase)
-        
         question = find_node_by_tag(question_phrase, lambda tag: tag.startswith("W"))
         question_object = find_node_by_tag(question_phrase, lambda tag: tag.startswith("N"), recursive=True)
+        question_object_lemma = wnl.lemmatize(detokenize(question_object.leaves()).lower(), "n") if question_object is not None else None
         
         question = detokenize(question.leaves()).lower()
         
@@ -198,14 +237,15 @@ class GameBot:
         
         np_word = detokenize(np.leaves())
 
-        games = self.find_games(np) # TODO: Include NER
+        parsed_entities = [entity["text"] for entity in entities if entity["ner"] in ("PERSON", "LOCATION")]
+        games = self.find_games(np, *parsed_entities)
         if len(games) > 0:
             game = games[0]
         else:
             game = None
         
         # Debug
-        # print(question, question_object, predicate, np, query)
+        print(question, question_object, predicate, np, query)
 
         results = []
         if question in ("when",):
@@ -227,7 +267,6 @@ class GameBot:
                 return f"I couldn't find any game called {np_word}"
             
             if predicate_lemma == "be":
-    
                 ind = find_node_by_tag(vb, "NP", which=2)
                 ind_lemma = None if ind is None else wnl.lemmatize(detokenize(ind.leaves()).lower(), "n")
                 if ind_lemma == "rating":
@@ -242,10 +281,10 @@ class GameBot:
                 ]
         else:
             if question in ("what",):
-                if question_object is not None:
-                    question_object_word = detokenize(question_object.leaves()).lower()
-                    question_object_lemma = wnl.lemmatize(question_object_word, "n")
-                    
+                if question_object is None and find_node_by_tag(np, "POS", recursive=True):
+                    question_object_lemma = wnl.lemmatize(np.leaves()[-1], "n")
+                
+                if question_object_lemma is not None:
                     if question_object_lemma == "franchise":
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
@@ -283,7 +322,7 @@ class GameBot:
                 
             if len(results) == 0:
                 # Fallback
-                results = self.find_relations_like(subject=np, relation=predicate_lemma)
+                results = self.find_relations_like(subject=np_word, relation=predicate_lemma)
                 results = [
                     f"{capitalize_all(result[0])} {conjugate(result[1], result[0])} {result[2]}" for result in results
                 ]
@@ -303,6 +342,14 @@ class GameBot:
         
         return True
     
+    def fetch_username(self):
+        username = next(iter(self.cur.execute("SELECT value FROM metadata WHERE key = 'username';")), (None,))[0]
+        if username:
+            print(f"Welcome back {capitalize_all(username)}. Type \"logout\" to log out.")
+        else:
+            username = None # Handle empty strings
+        return username
+    
     def ensure_username(self):
         while self.username is None:
             print("No username has been selected. Please enter a valid one-word username.")
@@ -316,6 +363,9 @@ class GameBot:
                 if response not in ("no", "n", "not"):
                     self.username = username.lower()
                     print(f"Username selected: {self.username}")
+                    print("Type \"logout\" to log out.")
+                    self.cur.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('username', ?)", (self.username,))
+                    self.con.commit()
     
     def prompt(self):
         self.ensure_username()
@@ -329,6 +379,11 @@ class GameBot:
             
             if line.lower().strip(".!") in ["quit", "exit", "q"]:
                 return False
+            elif line.lower().strip(".!") in ["logout"]:
+                self.username = None
+                self.set("username", "")
+                self.ensure_username()
+                return self.prompt()
         except (KeyboardInterrupt, EOFError):
             return False
         

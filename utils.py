@@ -33,16 +33,20 @@ def and_join(strings):
     else:
         return ', '.join(strings[:-1]) + ' and ' + strings[-1]
 
-def remove_tag(np, tags="PP"):
+def remove_tag(np, tags="PP", recursive=False):
     if isinstance(tags, (str, bytes)):
         tags = (tags,)
         
     np = np.copy()
     i = 0
     while i < len(np):
-        if np[i].label() in tags:
-            np.pop(i)
-            i -= 1
+        if not isinstance(np[i], (str, bytes)):
+            if np[i].label() in tags:
+                np.pop(i)
+                i -= 1
+            else:
+                if recursive:
+                    np[i] = remove_tag(np[i], tags, recursive=recursive)
         i += 1
     
     return np
