@@ -97,6 +97,10 @@ class GameBot:
     def _find_relations(self, eq, **kwargs):
         if len(kwargs) == 0: return []
         
+        if kwargs.get("subject"):
+            if wnl.lemmatize(kwargs["subject"].lower(), "n") in ("i", "me"):
+                kwargs["subject"] = self.username
+        
         key_values = list(kwargs.items())
         
         query = "SELECT * FROM relations WHERE " + " AND ".join(key + eq + "?" for key, _ in key_values) + ";"
@@ -117,7 +121,8 @@ class GameBot:
         to = find_node_by_tag(vp, "NP")
         what = find_node_by_tag(vp, "NP", which=2)
         subject = find_node_by_tag(tree, "PRP", recursive=True)
-
+        subject_lemma = None
+        
         if subject is not None:
             # Fact
             subject_word = detokenize(subject.leaves()).lower()
@@ -141,7 +146,8 @@ class GameBot:
             
             if subject is not None:
                 if command_lemma == "forget":
-                    self.cur.execute("")
+                    if subject_lemma in ("i", "me"): subject_lemma = self.username
+                    self.cur.execute("DELETE FROM relations WHERE subject LIKE ?;", (subject_lemma,))
                     self.con.commit()
                     print(f"I've removed everything related to {subject_lemma}.")
                     return True
