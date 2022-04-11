@@ -112,16 +112,25 @@ class GameBot:
         to = find_node_by_tag(tree, "NP")
         what = find_node_by_tag(tree, "NP", which=2)
         
-        if command is not None and to is not None:
-            # TODO: Change command to be "tell me something"
-            fact = self.get_random_fact()
-            predicate = conjugate(fact[1], fact[0])
-            print(f"Did you know: {fact[0].capitalize()} {predicate} {fact[2]}?")
-            print(f"Related to game: {self.find_game_by_id(fact[-2])[1]}")
-            return True
-        
         print("Non-question received")
         print(command, to, what)
+        
+        if command is not None and to is not None:
+            # TODO: Change command to be "tell me something"
+            command_lemma = wnl.lemmatize(detokenize(command.leaves()).lower())
+            to_lemma = wnl.lemmatize(detokenize(to.leaves()).lower())
+            
+            if what is not None:
+                what_lemma = wnl.lemmatize(detokenize(what.leaves()).lower())
+                
+                if command_lemma in ("tell", "give") and to_lemma in ("me", "I") and "something" in what_lemma:
+                    fact = self.get_random_fact()
+                    predicate = conjugate(fact[1], fact[0])
+                    print(f"Did you know: {fact[0].capitalize()} {predicate} {fact[2]}?")
+                    print(f"Related to game: {self.find_game_by_id(fact[-2])[1]}")
+                    return True
+        
+        
         
         return "That doesn't look like a question... we currently only support questions"
     
@@ -188,17 +197,15 @@ class GameBot:
             return "Couldn't find what you're asking about"
         
         np_word = detokenize(np.leaves())
-        
-        ###!!!! USAID!!!###
-        # Here is probably where you would potentially want to implement any sort of stuff to handle asking questions
-        # about the specific rows we have. The code I have below is mostly related to the arbitrary fact finding that
-        # I was implementing. This function returns None on undefined errors, True on success (or handled errors), False
-        # when the program should exit, and a string for specific error messages.
-        # I recommend printing out question, query, predicate, and np to see what we have to work with. tree contains
-        # the entire parse tree.
+
+        games = self.find_games(np) # TODO: Include NER
+        if len(games) > 0:
+            game = games[0]
+        else:
+            game = None
         
         # Debug
-        print(question, question_object, predicate, np, query)
+        # print(question, question_object, predicate, np, query)
 
         results = []
         if question in ("when",):
@@ -206,9 +213,7 @@ class GameBot:
             particle = find_node_by_tag(query, "VBN", recursive=True)
             
             if particle is not None and wnl.lemmatize(detokenize(particle.leaves()).lower(), "v") == "release":
-                games = self.find_games(np)
-                if len(games) == 0:
-                    return f"I couldn't find any game called {np_word}"
+                if not games: return f"I couldn't find any game called {np_word}"
                 
                 for game in games:
                     title = capitalize_all(game[1])
@@ -218,14 +223,23 @@ class GameBot:
                     else:
                         results.append(f"I don't know when {title} was released")
         elif question in ("how",):
-            game = self.find_game(np)
             if game is None:
                 return f"I couldn't find any game called {np_word}"
             
-            results = self.find_relations_like(subject="there", relation="be", game_id=game[0])
-            results = [
-                f"{capitalize_all(result[0])} {result[1]} {result[2]}" for result in results
-            ]
+            if predicate_lemma == "be":
+    
+                ind = find_node_by_tag(vb, "NP", which=2)
+                ind_lemma = None if ind is None else wnl.lemmatize(detokenize(ind.leaves()).lower(), "n")
+                if ind_lemma == "rating":
+                    results.append(
+                        f"{game[1]} is rated {game[5]}"
+                    )
+            
+            if not results:
+                results = self.find_relations_like(subject="there", relation="be", game_id=game[0])
+                results = [
+                    f"{capitalize_all(result[0])} {result[1]} {result[2]}" for result in results
+                ]
         else:
             if question in ("what",):
                 if question_object is not None:
@@ -233,8 +247,6 @@ class GameBot:
                     question_object_lemma = wnl.lemmatize(question_object_word, "n")
                     
                     if question_object_lemma == "franchise":
-                        game = self.find_game(np)
-                        
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
                         else:
@@ -245,8 +257,6 @@ class GameBot:
                                 and_join(capitalize_all(franchise[1]) for franchise in franchises)
                             )
                     elif question_object_lemma == "story":
-                        game = self.find_game(np)
-    
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
                         else:
@@ -254,8 +264,6 @@ class GameBot:
                                 f"The story of {game[1]} is: {game[4]}"
                             )
                     elif question_object_lemma == "description":
-                        game = self.find_game(np)
-    
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
                         else:
@@ -263,8 +271,6 @@ class GameBot:
                                 f"The description of {game[1]} is: {game[3]}"
                             )
                     elif question_object_lemma == "rating":
-                        game = self.find_game(np)
-    
                         if game is None:
                             results.append(f"I couldn't find a game by that name: {np_word}")
                         else:
@@ -345,7 +351,7 @@ class GameBot:
 
 if __name__ == "__main__":
     bot = GameBot()
-    bot.preprocess_facts()
+    # bot.preprocess_facts()
     if "interact" in sys.argv: code.interact(local=locals())
     bot.loop()
     
