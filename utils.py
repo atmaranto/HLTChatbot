@@ -7,6 +7,22 @@ from nltk.stem import WordNetLemmatizer
 from corenlp import parser
 from tqdm import tqdm
 import sqlite3
+import re
+
+# Adapted from https://stackoverflow.com/questions/517923/what-is-the-best-way-to-remove-accents-normalize-in-a-python-unicode-string
+# Answer by RiGonz on StackOverflow
+def normalize_encoding(old):
+    """
+    Removes common accent characters, lower form.
+    Uses: regex.
+    """
+    new = old.lower()
+    new = re.sub(r'[àáâãäå]', 'a', new)
+    new = re.sub(r'[èéêë]', 'e', new)
+    new = re.sub(r'[ìíîï]', 'i', new)
+    new = re.sub(r'[òóôõö]', 'o', new)
+    new = re.sub(r'[ùúûü]', 'u', new)
+    return new
 
 def and_join(strings):
     strings = list(strings)

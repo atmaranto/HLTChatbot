@@ -14,7 +14,7 @@ import sqlite3
 import datetime
 
 from utils import advanced_parse, preprocess_db, find_node_by_tag, detokenize, capitalize_all, conjugate,\
-    remove_tag, and_join, wnl
+    remove_tag, and_join, normalize_encoding, wnl
 
 class GameBot:
     def __init__(self, db_path="games.sqlite"):
@@ -28,7 +28,20 @@ class GameBot:
                          "  key TEXT NOT NULL PRIMARY KEY,"
                          "  value TEXT NOT NULL"
                          ");")
-    
+
+        self.cur.execute("CREATE TABLE IF NOT EXISTS ascii_names ("
+                         "  game_id TEXT NOT NULL PRIMARY KEY,"
+                         "  value TEXT NOT NULL,"
+                         "  FOREIGN KEY(game_id) REFERENCES games(id)"
+                         ");")
+        rows = []
+        for game in self.cur.execute("SELECT * FROM games WHERE id NOT IN (SELECT game_id FROM ascii_names)"):
+            rows.append((game[0], normalize_encoding(game[1])))
+        
+        if rows:
+            self.cur.executemany("INSERT OR REPLACE INTO ascii_names (game_id, value) VALUES(?, ?)", rows)
+            self.con.commit()
+
     def preprocess_facts(self):
         start = next(iter(self.cur.execute("SELECT value FROM metadata_numbers WHERE key = 'bot_preprocess_offset'")), (0,))[0]
         preprocess_db(self.con, self.cur, start=start)
@@ -48,12 +61,12 @@ class GameBot:
             
             for descriptor_tree in descs:
                 descriptor = detokenize(descriptor_tree.leaves())
-                self.cur.execute("SELECT * FROM games WHERE name LIKE ?", (descriptor,))
+                self.cur.execute("SELECT * FROM games WHERE id IN (SELECT game_id FROM ascii_names WHERE value LIKE ?)", (descriptor,))
                 result = self.cur.fetchmany()
                 
                 if len(result) > 0: return result
                 
-                self.cur.execute("SELECT * FROM games WHERE name LIKE ?", ('%' + descriptor + '%',))
+                self.cur.execute("SELECT * FROM games WHERE id IN (SELECT game_id FROM ascii_names WHERE value LIKE ?)", ('%' + descriptor + '%',))
                 result = self.cur.fetchmany()
                 
                 if len(result) > 0: return result
@@ -106,6 +119,9 @@ class GameBot:
             print(f"Did you know: {fact[0].capitalize()} {predicate} {fact[2]}?")
             print(f"Related to game: {self.find_game_by_id(fact[-2])[1]}")
             return True
+        
+        print("Non-question received")
+        print(command, to, what)
         
         return "That doesn't look like a question... we currently only support questions"
     
@@ -285,7 +301,7 @@ class GameBot:
         while self.username is None:
             print("No username has been selected. Please enter a valid one-word username.")
             username = input("> ").strip()
-            if not username.isalnum():
+            if not username.isalnum() or not username:
                 print("That username contains non-alphanumeric characters")
             else:
                 print(f"Your name is {username}. Is this correct?")
@@ -329,7 +345,7 @@ class GameBot:
 
 if __name__ == "__main__":
     bot = GameBot()
-    #bot.preprocess_facts()
+    bot.preprocess_facts()
     if "interact" in sys.argv: code.interact(local=locals())
     bot.loop()
     
