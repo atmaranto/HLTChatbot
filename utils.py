@@ -87,6 +87,7 @@ def find_node_by_tag(tree, tags, which=1, recursive=False):
     
     while len(tree) > 0:
         for node in tree:
+            if isinstance(node, (str, bytes)): continue
             if (callable(tags) and tags(node.label())) or (not callable(tags) and node.label() in tags):
                 counter += 1
                 if counter >= which:

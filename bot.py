@@ -60,6 +60,8 @@ class GameBot:
                 descs = [detokenize(base_descriptor.leaves())]
                 other = remove_tag(base_descriptor, ("PP", "POS"), recursive=True)
                 if other != base_descriptor: descs.append(detokenize(other.leaves()))
+                other = find_node_by_tag(base_descriptor, "NNP", recursive=True) # Hack to find proper nouns
+                if other is not None and other != base_descriptor: descs.append(detokenize(other.leaves()))
             else:
                 descs = [base_descriptor]
             
