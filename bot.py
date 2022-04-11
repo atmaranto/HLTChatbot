@@ -67,13 +67,12 @@ class GameBot:
             
             for descriptor in descs:
                 # print("Looking for", repr(descriptor))
-                self.cur.execute("SELECT * FROM games WHERE id IN (SELECT game_id FROM ascii_names WHERE value LIKE ?)", (descriptor,))
-                result = self.cur.fetchmany()
+                result = list(self.cur.execute("SELECT * FROM games WHERE id IN (SELECT game_id FROM ascii_names WHERE value LIKE ?)", (descriptor,)))
                 
                 if len(result) > 0: return result
                 
-                self.cur.execute("SELECT * FROM games WHERE id IN (SELECT game_id FROM ascii_names WHERE value LIKE ?)", ('%' + descriptor + '%',))
-                result = self.cur.fetchmany()
+                res = self.cur.execute("SELECT * FROM games WHERE id IN (SELECT game_id FROM ascii_names WHERE value LIKE ?)", ('%' + descriptor + '%',))
+                result.extend(res)
                 
                 if len(result) > 0: return result
         
@@ -252,9 +251,6 @@ class GameBot:
             game = games[0]
         else:
             game = None
-        
-        # Debug
-        # print(question, question_object, predicate, np, query)
 
         results = []
         if question in ("when",):
@@ -348,7 +344,7 @@ class GameBot:
         if len(results) == 0:
             print("I'm afraid that I don't know much about that.")
         else:
-            print(f"{len(results)} responses matched your querry:")
+            print(f"{len(results)} responses matched your query:")
             for result in results:
                 if isinstance(result, str):
                     print(result)
