@@ -11,8 +11,8 @@ import json
 from tqdm import tqdm  # pip install tqdm
 
 # Twitch Client ID/Secret used for API authentication
-client_id = '***REMOVED***'
-client_secret = '***REMOVED***'
+client_id = 'your client id'
+client_secret = 'your secret'
 
 def get_oauth(client_id, client_secret):
     """
