@@ -10,10 +10,6 @@ from igdb.wrapper import IGDBWrapper  # pip install igdb-api-v4
 import json
 from tqdm import tqdm  # pip install tqdm
 
-# Twitch Client ID/Secret used for API authentication
-client_id = 'your client id'
-client_secret = 'your secret'
-
 def get_oauth(client_id, client_secret):
     """
     Gets OAuth token from Twitch.
@@ -111,6 +107,19 @@ class Game:
         return hash(self.checksum)
 
 if '__main__' == __name__:
+    from argparse import ArgumentParser
+    
+    ap = ArgumentParser(description="Downloads game information to the games.sqlite file for use with bot.py")
+    
+    ap.add_argument("client-id", help="Your Twitch client id for API authentication")
+    ap.add_argument("client-secret", help="Your Twitch client secrret for API authentication")
+    
+    args = ap.parse_args()
+    
+    # Twitch Client ID/Secret used for API authentication
+    client_id = args.client_id
+    client_secret = args.client_secret
+    
     db_connection = None  # Stores connection to SQL DB
     # Attempt to connect to SQL DB
     try:
